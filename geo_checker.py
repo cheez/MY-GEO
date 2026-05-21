@@ -18,7 +18,11 @@ AI_BOTS = [
     "Bytespider", "Diffbot", "CCBot", "DataForSeoBot",
 ]
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; GeoChecker/1.0)"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
 
 def safe_fetch(url):
     try:
@@ -176,16 +180,65 @@ if st.button("🔍 종합 점검 시작"):
         if sitemap_txt:
             sitemap_info = parse_sitemap(sitemap_txt)
 
-        # 점수 계산
+        # 점수 계산 (총 100점)
         score = 0
-        if robots_txt:                                    score += 25
-        if llms_txt:                                      score += 25
-        if sitemap_txt:                                   score += 15
-        if agents_txt:                                    score += 15
-        if blocked_c == 0 and partial_c == 0:             score += 10
-        elif blocked_c == 0:                              score += 5
-        if sitemap_refs_in_robots:                        score += 5
-        if sitemap_info and sitemap_info['count'] > 0:    score += 5
+        score_detail = {}
+
+        # robots.txt 존재 (15점)
+        if robots_txt:
+            score += 15
+            score_detail['robots.txt 존재'] = 15
+        else:
+            score_detail['robots.txt 존재'] = 0
+
+        # AI 봇 허용 상태 (20점)
+        if allowed_c == len(AI_BOTS) and blocked_c == 0 and partial_c == 0:
+            score += 20
+            score_detail[f'AI 봇 전체 허용 ({len(AI_BOTS)}/{len(AI_BOTS)})'] = 20
+        elif blocked_c == 0 and partial_c == 0:
+            score += 15
+            score_detail['AI 봇 허용 (일부 unknown)'] = 15
+        elif blocked_c == 0:
+            score += 10
+            score_detail[f'AI 봇 부분 제한 ({partial_c}개)'] = 10
+        else:
+            score += 0
+            score_detail[f'AI 봇 차단 있음 ({blocked_c}개)'] = 0
+
+        # sitemap.xml 존재 (10점)
+        if sitemap_txt:
+            score += 10
+            score_detail['sitemap.xml 존재'] = 10
+        else:
+            score_detail['sitemap.xml 존재'] = 0
+
+        # sitemap URL 수 > 0 (5점)
+        if sitemap_info and sitemap_info['count'] > 0:
+            score += 5
+            score_detail['sitemap URL 수 > 0'] = 5
+        else:
+            score_detail['sitemap URL 수 > 0'] = 0
+
+        # robots.txt에 Sitemap 참조 (5점)
+        if sitemap_refs_in_robots:
+            score += 5
+            score_detail['robots.txt Sitemap 참조'] = 5
+        else:
+            score_detail['robots.txt Sitemap 참조'] = 0
+
+        # llms.txt 존재 (20점)
+        if llms_txt:
+            score += 20
+            score_detail['llms.txt 존재'] = 20
+        else:
+            score_detail['llms.txt 존재'] = 0
+
+        # agents.md 존재 (15점)
+        if agents_txt:
+            score += 15
+            score_detail['agents.md 존재'] = 15
+        else:
+            score_detail['agents.md 존재'] = 0
 
     # ── 종합 요약 ──────────────────────────────────────
     st.header("📊 종합 요약")
@@ -195,6 +248,14 @@ if st.button("🔍 종합 점검 시작"):
     c3.metric("❌ AI 봇 차단", f"{blocked_c} / {len(AI_BOTS)}")
     c4.metric("⚠️ 부분 제한", f"{partial_c} / {len(AI_BOTS)}")
     c5.metric("llms.txt", "✅ 있음" if llms_txt else "❌ 없음")
+
+    with st.expander("📋 점수 항목별 상세 내역"):
+        max_map = {'robots.txt 존재': 15, 'sitemap.xml 존재': 10, 'sitemap URL 수 > 0': 5,
+                   'robots.txt Sitemap 참조': 5, 'llms.txt 존재': 20, 'agents.md 존재': 15}
+        for item, pts in score_detail.items():
+            max_pts = max_map.get(item, 20)
+            icon = "✅" if pts > 0 else "❌"
+            st.markdown(f"{icon} **{item}** — {pts}점 / {max_pts}점")
     st.divider()
 
     # ── robots.txt ─────────────────────────────────────
