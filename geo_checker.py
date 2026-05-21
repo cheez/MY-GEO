@@ -212,10 +212,10 @@ if st.button("🔍 종합 점검 시작"):
         else:
             score_detail['sitemap.xml 존재'] = 0
 
-        # sitemap URL 수 > 0 (5점)
+        # sitemap URL 수 > 0 (10점)
         if sitemap_info and sitemap_info['count'] > 0:
-            score += 5
-            score_detail['sitemap URL 수 > 0'] = 5
+            score += 10
+            score_detail['sitemap URL 수 > 0'] = 10
         else:
             score_detail['sitemap URL 수 > 0'] = 0
 
@@ -253,7 +253,7 @@ if st.button("🔍 종합 점검 시작"):
 
     with st.expander("📋 점수 항목별 상세 내역"):
         max_map = {'robots.txt 존재': 15, 'sitemap.xml 존재': 10, 'sitemap URL 수 > 0': 5,
-                   'robots.txt Sitemap 참조': 5, 'llms.txt 존재': 20, 'agents.md 존재': 15}
+                   'robots.txt Sitemap 참조': 5, 'llms.txt 존재': 20, 'agents.md 존재': 15, 'sitemap URL 수 > 0': 10}
         for item, pts in score_detail.items():
             max_pts = max_map.get(item, 20)
             icon = "✅" if pts > 0 else "❌"
