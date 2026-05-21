@@ -224,36 +224,36 @@ if st.button("🔍 종합 점검 시작"):
         page = analyze_homepage(homepage_txt, domain) if homepage_txt else None
 
         # ── 점수 계산 ──────────────────────────────────
-        score = 0
         score_detail = {}
 
-        def add(key, pts, max_pts, condition):
-            nonlocal score
+        def calc(key, pts, max_pts, condition):
             earned = pts if condition else 0
-            score += earned
             score_detail[key] = (earned, max_pts)
+            return earned
 
-        add('robots.txt 존재',           8,  8,  robots_txt is not None)
+        s = 0
+        s += calc('robots.txt 존재',           8,  8,  robots_txt is not None)
         if allowed_c == len(AI_BOTS) and blocked_c == 0 and partial_c == 0:
-            add(f'AI 봇 전체 허용 ({len(AI_BOTS)}/{len(AI_BOTS)})', 12, 12, True)
+            s += calc(f'AI 봇 전체 허용 ({len(AI_BOTS)}/{len(AI_BOTS)})', 12, 12, True)
         elif blocked_c == 0 and partial_c == 0:
-            add('AI 봇 허용 (일부 unknown)',  8, 12, True)
+            s += calc('AI 봇 허용 (일부 unknown)',  8, 12, True)
         elif blocked_c == 0:
-            add(f'AI 봇 부분 제한 ({partial_c}개)', 4, 12, True)
+            s += calc(f'AI 봇 부분 제한 ({partial_c}개)', 4, 12, True)
         else:
-            add(f'AI 봇 차단 ({blocked_c}개)',  0, 12, False)
-        add('sitemap.xml 존재',           5,  5,  sitemap_txt is not None)
-        add('sitemap URL 수 > 0',         5,  5,  sitemap_info and sitemap_info['count'] > 0)
-        add('robots.txt Sitemap 참조',    5,  5,  bool(sitemap_refs_in_robots))
-        add('llms.txt 존재',             10, 10,  llms_txt is not None)
-        add('agents.md 존재',             8,  8,  agents_txt is not None)
-        add('UCP (.well-known/ucp)',      7,  7,  ucp_txt is not None)
-        add('Schema.org JSON-LD',        10, 10,  page and len(page['schemas']) > 0)
-        add('OG 태그 (og:title)',         8,  8,  page and 'og:title' in page['og'])
-        add('Canonical 태그',             7,  7,  page and page['canonical'] is not None)
-        add('hreflang 태그',              8,  8,  page and len(page['hreflangs']) > 0)
-        add('텍스트 비중 > 10%',          5,  5,  page and page['text_ratio'] > 10)
-        add('응답속도 < 3초',             2,  2,  resp_time > 0 and resp_time < 3)
+            s += calc(f'AI 봇 차단 ({blocked_c}개)',  0, 12, False)
+        s += calc('sitemap.xml 존재',           5,  5,  sitemap_txt is not None)
+        s += calc('sitemap URL 수 > 0',         5,  5,  sitemap_info and sitemap_info['count'] > 0)
+        s += calc('robots.txt Sitemap 참조',    5,  5,  bool(sitemap_refs_in_robots))
+        s += calc('llms.txt 존재',             10, 10,  llms_txt is not None)
+        s += calc('agents.md 존재',             8,  8,  agents_txt is not None)
+        s += calc('UCP (.well-known/ucp)',      7,  7,  ucp_txt is not None)
+        s += calc('Schema.org JSON-LD',        10, 10,  page and len(page['schemas']) > 0)
+        s += calc('OG 태그 (og:title)',         8,  8,  page and 'og:title' in page['og'])
+        s += calc('Canonical 태그',             7,  7,  page and page['canonical'] is not None)
+        s += calc('hreflang 태그',              8,  8,  page and len(page['hreflangs']) > 0)
+        s += calc('텍스트 비중 > 10%',          5,  5,  page and page['text_ratio'] > 10)
+        s += calc('응답속도 < 3초',             2,  2,  resp_time > 0 and resp_time < 3)
+        score = s
 
     # ── 종합 요약 ──────────────────────────────────────
     st.header("📊 종합 요약")
