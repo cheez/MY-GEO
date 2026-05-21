@@ -3,7 +3,6 @@ import requests
 import re
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
-from collections import defaultdict
 
 st.set_page_config(page_title="AI Crawling Geo Checker", layout="wide")
 st.title("🤖 AI 크롤링 & Geo 점검 리포트")
@@ -19,9 +18,7 @@ AI_BOTS = [
     "Bytespider", "Diffbot", "CCBot", "DataForSeoBot",
 ]
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; GeoChecker/1.0)"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; GeoChecker/1.0)"}
 
 def safe_fetch(url):
     try:
@@ -33,44 +30,86 @@ def safe_fetch(url):
         return None, str(e)
 
 def parse_robots(txt):
-    rules = []
+    """
+    robots.txt를 파싱해 user-agent별 allow/disallow 규칙과 sitemap 목록을 반환.
+    빈 줄을 만나면 현재 블록 종료 (표준 동작).
+    """
+    blocks = []   # [{'agents': [...], 'allow': [...], 'disallow': [...]}]
     cur = None
     sitemap_refs = []
-    for line in txt.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#'):
-            # 주석에서 특수 지시어 추출
-            continue
-        low = line.lower()
-        if low.startswith('user-agent:'):
-            ua = line[11:].strip()
-            cur = {'ua': ua, 'allow': [], 'disallow': []}
-            rules.append(cur)
-        elif cur:
-            if low.startswith('allow:'):
-                cur['allow'].append(line[6:].strip())
-            elif low.startswith('disallow:'):
-                cur['disallow'].append(line[9:].strip())
-        if low.startswith('sitemap:'):
-            sitemap_refs.append(line[8:].strip())
-    return rules, sitemap_refs
 
-def check_bot_status(bot_name, rules):
+    for line in txt.splitlines():
+        raw = line.strip()
+        low = raw.lower()
+
+        # 빈 줄 → 현재 블록 종료
+        if not raw:
+            cur = None
+            continue
+
+        # 주석 스킵
+        if raw.startswith('#'):
+            continue
+
+        if low.startswith('sitemap:'):
+            sitemap_refs.append(raw[8:].strip())
+            continue
+
+        if low.startswith('user-agent:'):
+            ua = raw[11:].strip()
+            # 연속된 user-agent 라인이면 같은 블록에 추가
+            if cur is None:
+                cur = {'agents': [], 'allow': [], 'disallow': []}
+                blocks.append(cur)
+            cur['agents'].append(ua)
+        elif cur is not None:
+            if low.startswith('allow:'):
+                cur['allow'].append(raw[6:].strip())
+            elif low.startswith('disallow:'):
+                cur['disallow'].append(raw[9:].strip())
+
+    return blocks, sitemap_refs
+
+def find_block(bot_name, blocks):
+    """특정 봇에 적용될 블록 반환. specific 우선, 없으면 wildcard."""
     key = bot_name.lower()
-    wildcard = next((r for r in rules if r['ua'] == '*'), None)
-    specific = next((r for r in rules if r['ua'].lower() == key), None)
-    active = specific or wildcard
-    if not active:
-        return 'unknown', specific is not None
-    dis = active['disallow']
-    al = active['allow']
-    blocked_all = any(d in ('/', '/*') for d in dis)
-    allowed_root = any(a in ('/', '') for a in al)
+    specific = next((b for b in blocks if key in [a.lower() for a in b['agents']]), None)
+    wildcard = next((b for b in blocks if '*' in b['agents']), None)
+    return specific, wildcard
+
+def check_bot_status(bot_name, blocks):
+    """
+    허용/차단/부분/불명 판단 로직:
+    - Allow: / 가 있으면 → 루트 전체 허용 (일부 Disallow는 정상적인 제외) → allowed
+    - Disallow: / 또는 /* 있고 Allow: / 없음 → blocked
+    - Disallow 일부만 있고 Allow: / 없음 → partial
+    - 규칙 없음 → unknown
+    """
+    specific, wildcard = find_block(bot_name, blocks)
     has_specific = specific is not None
-    if blocked_all and not allowed_root:
+    active = specific or wildcard
+
+    if not active:
+        return 'unknown', False
+
+    al = active['allow']
+    dis = active['disallow']
+
+    # Allow: / 또는 Allow: (빈값) → 루트 전체 허용
+    root_allowed = any(a in ('/', '') for a in al)
+    if root_allowed:
+        return 'allowed', has_specific
+
+    # Disallow: / 또는 /* → 전체 차단
+    root_blocked = any(d in ('/', '/*') for d in dis)
+    if root_blocked:
         return 'blocked', has_specific
+
+    # Disallow 없거나 모두 빈값 → 허용
     if not dis or all(d == '' for d in dis):
         return 'allowed', has_specific
+
+    # 일부 경로만 Disallow → 부분 제한
     return 'partial', has_specific
 
 def parse_sitemap(txt):
@@ -90,8 +129,13 @@ def parse_sitemap(txt):
     except Exception as e:
         return {'type': 'error', 'count': 0, 'lastmod': '-', 'locs': [], 'error': str(e)}
 
-def extract_comments(txt):
-    return [l.strip()[1:].strip() for l in txt.splitlines() if l.strip().startswith('#')]
+def extract_special_comments(txt):
+    special_keys = ['agents.md', 'ucp', 'mcp', 'skill.md', 'bots@']
+    return [
+        l.strip()[1:].strip()
+        for l in txt.splitlines()
+        if l.strip().startswith('#') and any(k in l.lower() for k in special_keys)
+    ]
 
 def score_color(s):
     if s >= 70: return "🟢"
@@ -108,26 +152,25 @@ if st.button("🔍 종합 점검 시작"):
     domain = f"{parsed.scheme}://{parsed.netloc}"
 
     with st.spinner("robots.txt · llms.txt · agents.md · sitemap.xml 분석 중..."):
-
         robots_txt, robots_err = safe_fetch(domain + "/robots.txt")
         llms_txt,   llms_err   = safe_fetch(domain + "/llms.txt")
         agents_txt, agents_err = safe_fetch(domain + "/agents.md")
-        sitemap_txt,sitemap_err= safe_fetch(domain + "/sitemap.xml")
+        sitemap_txt, sitemap_err = safe_fetch(domain + "/sitemap.xml")
 
-        robots_parsed = None
+        blocks = []
         sitemap_refs_in_robots = []
         bot_statuses = []
         allowed_c = blocked_c = partial_c = unknown_c = 0
 
         if robots_txt:
-            robots_parsed, sitemap_refs_in_robots = parse_robots(robots_txt)
+            blocks, sitemap_refs_in_robots = parse_robots(robots_txt)
             for bot in AI_BOTS:
-                status, is_specific = check_bot_status(bot, robots_parsed)
+                status, is_specific = check_bot_status(bot, blocks)
                 bot_statuses.append((bot, status, is_specific))
-                if status == 'allowed': allowed_c += 1
+                if status == 'allowed':   allowed_c += 1
                 elif status == 'blocked': blocked_c += 1
                 elif status == 'partial': partial_c += 1
-                else: unknown_c += 1
+                else:                     unknown_c += 1
 
         sitemap_info = None
         if sitemap_txt:
@@ -135,15 +178,16 @@ if st.button("🔍 종합 점검 시작"):
 
         # 점수 계산
         score = 0
-        if robots_txt:       score += 25
-        if llms_txt:         score += 25
-        if sitemap_txt:      score += 15
-        if agents_txt:       score += 15
-        if blocked_c == 0:   score += 10
-        if sitemap_refs_in_robots: score += 5
-        if sitemap_info and sitemap_info['count'] > 0: score += 5
+        if robots_txt:                                    score += 25
+        if llms_txt:                                      score += 25
+        if sitemap_txt:                                   score += 15
+        if agents_txt:                                    score += 15
+        if blocked_c == 0 and partial_c == 0:             score += 10
+        elif blocked_c == 0:                              score += 5
+        if sitemap_refs_in_robots:                        score += 5
+        if sitemap_info and sitemap_info['count'] > 0:    score += 5
 
-    # ── 요약 메트릭 ──────────────────────────────────
+    # ── 종합 요약 ──────────────────────────────────────
     st.header("📊 종합 요약")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(f"{score_color(score)} 종합 점수", f"{score} / 100")
@@ -153,7 +197,7 @@ if st.button("🔍 종합 점검 시작"):
     c5.metric("llms.txt", "✅ 있음" if llms_txt else "❌ 없음")
     st.divider()
 
-    # ── robots.txt ───────────────────────────────────
+    # ── robots.txt ─────────────────────────────────────
     st.header("1️⃣ robots.txt 분석")
     if robots_err:
         st.error(f"robots.txt 접근 실패: {robots_err}")
@@ -161,14 +205,11 @@ if st.button("🔍 종합 점검 시작"):
         r1, r2 = st.columns([1, 1])
         with r1:
             st.markdown(f"**URL:** `{domain}/robots.txt`")
-            st.markdown(f"**User-agent 블록 수:** {len(robots_parsed)}개")
+            st.markdown(f"**User-agent 블록 수:** {len(blocks)}개")
             sm_ref = sitemap_refs_in_robots[0] if sitemap_refs_in_robots else "❌ 없음"
             st.markdown(f"**Sitemap 참조:** `{sm_ref}`")
 
-            # 특수 지시어 (주석)
-            comments = extract_comments(robots_txt)
-            special_keys = ['agents.md', 'ucp', 'mcp', 'skill.md', 'bots@']
-            special = [c for c in comments if any(k in c.lower() for k in special_keys)]
+            special = extract_special_comments(robots_txt)
             if special:
                 st.markdown("**🤖 AI 에이전트 특수 지시어:**")
                 for s in special[:6]:
@@ -178,22 +219,14 @@ if st.button("🔍 종합 점검 시작"):
             st.markdown("**AI 크롤러별 허용 상태:**")
             for bot, status, is_specific in bot_statuses:
                 if status == 'allowed':
-                    icon = "✅"
-                    label = "허용"
-                    color = "normal"
+                    icon, label = "✅", "허용"
                 elif status == 'blocked':
-                    icon = "❌"
-                    label = "차단"
-                    color = "inverse"
+                    icon, label = "❌", "차단"
                 elif status == 'partial':
-                    icon = "⚠️"
-                    label = "부분"
-                    color = "off"
+                    icon, label = "⚠️", "부분 제한"
                 else:
-                    icon = "❓"
-                    label = "불명"
-                    color = "off"
-                spec_tag = " *(개별 규칙)*" if is_specific else ""
+                    icon, label = "❓", "규칙 없음"
+                spec_tag = " *(개별 규칙 적용)*" if is_specific else " *(wildcard 적용)*"
                 st.markdown(f"{icon} **{bot}** — {label}{spec_tag}")
 
         with st.expander("robots.txt 원문 보기"):
@@ -201,7 +234,7 @@ if st.button("🔍 종합 점검 시작"):
 
     st.divider()
 
-    # ── llms.txt ─────────────────────────────────────
+    # ── llms.txt ───────────────────────────────────────
     st.header("2️⃣ llms.txt 분석")
     if llms_err:
         st.warning(f"llms.txt 없음: {llms_err}")
@@ -230,7 +263,7 @@ if st.button("🔍 종합 점검 시작"):
 
     st.divider()
 
-    # ── agents.md ────────────────────────────────────
+    # ── agents.md ──────────────────────────────────────
     st.header("3️⃣ agents.md 분석")
     if agents_err:
         st.warning(f"agents.md 없음: {agents_err}")
@@ -245,7 +278,7 @@ if st.button("🔍 종합 점검 시작"):
 
     st.divider()
 
-    # ── sitemap.xml ──────────────────────────────────
+    # ── sitemap.xml ────────────────────────────────────
     st.header("4️⃣ sitemap.xml 분석")
     if sitemap_err:
         st.error(f"sitemap.xml 접근 실패: {sitemap_err}")
@@ -255,7 +288,7 @@ if st.button("🔍 종합 점검 시작"):
         s2.metric("URL / 사이트맵 수", f"{sitemap_info['count']}개")
         s3.metric("최근 lastmod", sitemap_info['lastmod'])
 
-        if sitemap_info['locs']:
+        if sitemap_info.get('locs'):
             st.markdown("**포함된 사이트맵 (상위 5개):**")
             for loc in sitemap_info['locs']:
                 st.caption(f"• {loc}")
@@ -268,7 +301,7 @@ if st.button("🔍 종합 점검 시작"):
 
     st.divider()
 
-    # ── 개선 권고사항 ─────────────────────────────────
+    # ── 개선 권고사항 ──────────────────────────────────
     st.header("💡 개선 권고사항")
     recs = []
     if not robots_txt:
@@ -276,6 +309,9 @@ if st.button("🔍 종합 점검 시작"):
     if blocked_c > 0:
         blocked_names = [b for b, s, _ in bot_statuses if s == 'blocked']
         recs.append(("❌", f"차단된 AI 봇 {blocked_c}개: {', '.join(blocked_names)}"))
+    if partial_c > 0:
+        partial_names = [b for b, s, _ in bot_statuses if s == 'partial']
+        recs.append(("⚠️", f"부분 제한 AI 봇 {partial_c}개: {', '.join(partial_names)} — 주요 경로 허용 여부 확인 필요"))
     if not llms_txt:
         recs.append(("⚠️", "llms.txt가 없습니다. AI 언어모델의 사이트 이해도를 높이려면 추가를 권장합니다."))
     if not agents_txt:
