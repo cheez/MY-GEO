@@ -245,8 +245,10 @@ if st.button("🔍 종합 점검 시작"):
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(f"{score_color(score)} 종합 점수", f"{score} / 100")
     c2.metric("✅ AI 봇 허용", f"{allowed_c} / {len(AI_BOTS)}")
-    c3.metric("❌ AI 봇 차단", f"{blocked_c} / {len(AI_BOTS)}")
-    c4.metric("⚠️ 부분 제한", f"{partial_c} / {len(AI_BOTS)}")
+    blocked_icon = "✅ 차단 없음" if blocked_c == 0 else "❌ AI 봇 차단"
+    partial_icon = "✅ 제한 없음" if partial_c == 0 else "⚠️ 부분 제한"
+    c3.metric(blocked_icon, f"{blocked_c} / {len(AI_BOTS)}", help="0이면 정상")
+    c4.metric(partial_icon, f"{partial_c} / {len(AI_BOTS)}", help="0이면 정상")
     c5.metric("llms.txt", "✅ 있음" if llms_txt else "❌ 없음")
 
     with st.expander("📋 점수 항목별 상세 내역"):
